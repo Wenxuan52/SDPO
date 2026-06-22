@@ -20,9 +20,13 @@ PYTHON_VERSION="${PYTHON_VERSION:-3.12}"
 PYPI_INDEX_URL="${PYPI_INDEX_URL:-https://pypi.org/simple}"
 TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu124}"
 
-# README says vllm==0.8.4 for GH200/Hopper-style cluster runs.
-# Override with VLLM_VERSION=... if the repo/run script requires a different one.
-VLLM_VERSION="${VLLM_VERSION:-0.8.4}"
+# This repo revision imports vLLM V1 internals from:
+#   verl/workers/rollout/vllm_rollout/vllm_async_server.py
+# In particular, it requires:
+#   from vllm.v1.engine.utils import CoreEngineProcManager
+# vLLM 0.8.x does not provide that module in A800/H20/H200 x86_64 envs.
+# Override with VLLM_VERSION=... only if the validation below still passes.
+VLLM_VERSION="${VLLM_VERSION:-0.12.0}"
 FLASH_ATTN_VERSION="${FLASH_ATTN_VERSION:-2.7.4.post1}"
 
 MAX_JOBS="${MAX_JOBS:-8}"
@@ -108,7 +112,7 @@ python -m pip install -U ninja cmake \
   -i "${PYPI_INDEX_URL}" || true
 
 echo "[setup] installing vLLM ${VLLM_VERSION} from official PyPI"
-python -m pip install "vllm==${VLLM_VERSION}" \
+python -m pip install --upgrade --force-reinstall "vllm==${VLLM_VERSION}" \
   -i "${PYPI_INDEX_URL}" \
   --extra-index-url "${TORCH_INDEX_URL}"
 
@@ -234,6 +238,18 @@ imports = [
 for name in imports:
     importlib.import_module(name)
     print(f"import ok: {name}")
+
+from vllm import LLM, SamplingParams
+print("vllm public API import ok:", LLM, SamplingParams)
+
+# Repo-specific compatibility check for the current vLLM async rollout code.
+# Do not remove this: `import vllm` can succeed while the actual SDPO vLLM
+# rollout server still fails at startup if this private V1 path is absent.
+from vllm.v1.engine.utils import CoreEngineProcManager
+print("vllm CoreEngineProcManager import ok:", CoreEngineProcManager)
+
+import verl.workers.rollout.vllm_rollout.vllm_async_server
+print("verl vLLM async server import ok")
 
 print("validation ok")
 PY
