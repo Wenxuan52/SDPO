@@ -117,10 +117,20 @@ PY
 log "Searching for vLLM private API dependencies in this repository"
 PRIVATE_MATCHES="$(rg -n 'vllm[.]v1[.]engine[.]utils|CoreEngineProcManager' . -g '!test_h200_sdpo_ready.sh' -g '!*.pyc' -g '!*.log' || true)"
 if [[ -n "$PRIVATE_MATCHES" ]]; then
-  warn "Found references to vLLM private/internal paths. These are not tested here unless training code depends on them at runtime; verify vLLM compatibility if async rollout is used."
+  warn "Found references to vLLM private/internal paths:"
   printf '%s\n' "$PRIVATE_MATCHES"
 else
   log "No references to vLLM private paths found; no private vLLM API import test is needed."
+fi
+
+if rg -q '^from vllm[.]v1[.]engine[.]utils import CoreEngineProcManager' verl/workers/rollout/vllm_rollout/vllm_async_server.py; then
+  log "Training vLLM async server imports CoreEngineProcManager; verifying this repo-specific vLLM private API dependency"
+  python - <<'PY'
+from vllm.v1.engine.utils import CoreEngineProcManager
+import verl.workers.rollout.vllm_rollout.vllm_async_server
+print("import vllm.v1.engine.utils.CoreEngineProcManager: ok", CoreEngineProcManager)
+print("import verl.workers.rollout.vllm_rollout.vllm_async_server: ok")
+PY
 fi
 
 BASIC_READY=1
