@@ -18,12 +18,22 @@ PYTHON_VERSION="${PYTHON_VERSION:-3.12}"
 
 # Official package sources.
 PYPI_INDEX_URL="${PYPI_INDEX_URL:-https://pypi.org/simple}"
-TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu124}"
+TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu128}"
 
-# README says vllm==0.8.4 for GH200/Hopper-style cluster runs.
-# Override with VLLM_VERSION=... if the repo/run script requires a different one.
-VLLM_VERSION="${VLLM_VERSION:-0.8.4}"
-FLASH_ATTN_VERSION="${FLASH_ATTN_VERSION:-2.7.4.post1}"
+# This repo revision imports vLLM V1 internals from:
+#   verl/workers/rollout/vllm_rollout/vllm_async_server.py
+# In particular, it requires:
+#   from vllm.v1.engine.utils import CoreEngineProcManager
+# vLLM 0.8.x does not provide that module in A800/H20/H200 x86_64 envs.
+# Override with VLLM_VERSION=... only if the validation below still passes.
+VLLM_VERSION="${VLLM_VERSION:-0.12.0}"
+TORCH_VERSION="${TORCH_VERSION:-2.9.0}"
+TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.24.0}"
+TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-2.9.0}"
+# flash-attn 2.7.4.post1 can import-fail with torch 2.9.x due to a C++ ABI
+# mismatch (undefined c10::Error symbols). vLLM 0.12.0 resolves torch 2.9.x,
+# so use the newer FlashAttention line from the repo's stable vLLM image.
+FLASH_ATTN_VERSION="${FLASH_ATTN_VERSION:-2.8.1}"
 
 MAX_JOBS="${MAX_JOBS:-8}"
 WANDB_MODE="${WANDB_MODE:-offline}"
@@ -37,6 +47,9 @@ echo "[setup] pypi:          ${PYPI_INDEX_URL}"
 echo "[setup] torch index:   ${TORCH_INDEX_URL}"
 echo "[setup] data root:     ${DATA_ROOT}"
 echo "[setup] python target: ${PYTHON_VERSION}"
+echo "[setup] torch target:  ${TORCH_VERSION}"
+echo "[setup] vllm target:   ${VLLM_VERSION}"
+echo "[setup] flash target:  ${FLASH_ATTN_VERSION}"
 
 # Force official sources for pip even if the cluster has a global pip.conf mirror.
 export PIP_INDEX_URL="${PYPI_INDEX_URL}"
@@ -107,10 +120,24 @@ echo "[setup] installing build helpers from official PyPI"
 python -m pip install -U ninja cmake \
   -i "${PYPI_INDEX_URL}" || true
 
+echo "[setup] installing PyTorch ${TORCH_VERSION} from ${TORCH_INDEX_URL}"
+python -m pip install --upgrade --force-reinstall \
+  "torch==${TORCH_VERSION}" \
+  "torchvision==${TORCHVISION_VERSION}" \
+  "torchaudio==${TORCHAUDIO_VERSION}" \
+  --index-url "${TORCH_INDEX_URL}"
+
 echo "[setup] installing vLLM ${VLLM_VERSION} from official PyPI"
-python -m pip install "vllm==${VLLM_VERSION}" \
+python -m pip install --upgrade --force-reinstall "vllm==${VLLM_VERSION}" \
   -i "${PYPI_INDEX_URL}" \
   --extra-index-url "${TORCH_INDEX_URL}"
+
+echo "[setup] re-asserting PyTorch ${TORCH_VERSION} after vLLM dependency resolution"
+python -m pip install --upgrade --force-reinstall \
+  "torch==${TORCH_VERSION}" \
+  "torchvision==${TORCHVISION_VERSION}" \
+  "torchaudio==${TORCHAUDIO_VERSION}" \
+  --index-url "${TORCH_INDEX_URL}"
 
 echo "[setup] installing SDPO requirements from official PyPI"
 REQ_FILE="$(mktemp /tmp/sdpo-h200-req.XXXXXX.txt)"
@@ -160,7 +187,10 @@ python -m pip install liger-kernel \
   -i "${PYPI_INDEX_URL}" || true
 
 echo "[setup] installing FlashAttention ${FLASH_ATTN_VERSION}"
-python -m pip install "flash-attn==${FLASH_ATTN_VERSION}" \
+# Remove any previously installed incompatible binary extension before
+# reinstalling; otherwise Python may keep loading a stale flash_attn_2_cuda .so.
+python -m pip uninstall -y flash-attn flash_attn >/dev/null 2>&1 || true
+python -m pip install --upgrade --force-reinstall --no-deps "flash-attn==${FLASH_ATTN_VERSION}" \
   --no-build-isolation \
   -i "${PYPI_INDEX_URL}" || {
     echo "[setup][error] flash-attn installation failed."
@@ -234,6 +264,18 @@ imports = [
 for name in imports:
     importlib.import_module(name)
     print(f"import ok: {name}")
+
+from vllm import LLM, SamplingParams
+print("vllm public API import ok:", LLM, SamplingParams)
+
+# Repo-specific compatibility check for the current vLLM async rollout code.
+# Do not remove this: `import vllm` can succeed while the actual SDPO vLLM
+# rollout server still fails at startup if this private V1 path is absent.
+from vllm.v1.engine.utils import CoreEngineProcManager
+print("vllm CoreEngineProcManager import ok:", CoreEngineProcManager)
+
+import verl.workers.rollout.vllm_rollout.vllm_async_server
+print("verl vLLM async server import ok")
 
 print("validation ok")
 PY
