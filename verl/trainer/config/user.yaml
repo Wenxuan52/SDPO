@@ -2,10 +2,10 @@ defaults:
   - _self_
 
 vars:
-  dir: /users/${oc.env:USER}/SDPO
+  dir: /root/workspace/SDPO
+  log_dir: /media/datasets/cheliu21/cxy_worldmodel/sdpo/output
+  ckpt_dir: /media/datasets/cheliu21/cxy_worldmodel/sdpo/checkpoints
   task: ${oc.env:TASK}
-  log_dir: /users/${oc.env:USER}/output
-  ckpt_dir: /capstor/scratch/cscs/${oc.env:USER}/ttrl_runs/${vars.task}
 
 data:
   train_files: ["${vars.dir}/${vars.task}/train.parquet"]
