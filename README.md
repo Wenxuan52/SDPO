@@ -246,6 +246,16 @@ bash experiments/generalization/run_baseline_grpo_all.sh
 bash experiments/generalization/run_sdpo_all.sh
 ```
 
+**Dedicated SDPO Biology run (Qwen3-8B, reverse KL, EMA 0.05):**
+```bash
+bash experiments/generalization/run_sdpo_qwen3_8b_biology_reversekl_ema005.sh
+```
+
+To inspect the Slurm command without submitting it, add `--dry-run`:
+```bash
+bash experiments/generalization/run_sdpo_qwen3_8b_biology_reversekl_ema005.sh --dry-run
+```
+
 #### Reproducing Results (With Rich Environment Feedback)
 Run the following commands to reproduce the results with rich environment feedback.
 
