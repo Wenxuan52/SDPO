@@ -65,6 +65,9 @@ MODEL_PATH="${MODEL_PATH:-Qwen/Qwen3-8B}"
 # Keep runtime jobs deterministic. setup_h200_env.sh should already have
 # installed these deps; set INSTALL_RUNTIME_DEPS=1 only to repair an env.
 INSTALL_RUNTIME_DEPS="${INSTALL_RUNTIME_DEPS:-0}"
+# auto: use sbatch when available, otherwise run directly in the current shell.
+# Set LAUNCH_MODE=sbatch or LAUNCH_MODE=local to force one path.
+LAUNCH_MODE="${LAUNCH_MODE:-auto}"
 
 # =============================================================================
 # JOB SUBMISSION FUNCTION
@@ -95,6 +98,7 @@ if [ ${INSTALL_RUNTIME_DEPS} = 1 ]; then python -m pip install word2number latex
 
     local run_cmd="bash ${PROJECT_ROOT}/training/verl_training.sh $exp_name $CONFIG_NAME $data_path $script_args"
     local wrapped_cmd="srun bash -lc '$setup_cmds; $run_cmd'"
+    local local_cmd="bash -lc '$setup_cmds; $run_cmd'"
 
     local sbatch_cmd=(
         sbatch
@@ -114,17 +118,43 @@ if [ ${INSTALL_RUNTIME_DEPS} = 1 ]; then python -m pip install word2number latex
         --wrap="$wrapped_cmd"
     )
 
+    local effective_launch_mode="$LAUNCH_MODE"
+    if [ "$effective_launch_mode" = "auto" ]; then
+        if command -v sbatch >/dev/null 2>&1; then
+            effective_launch_mode="sbatch"
+        else
+            effective_launch_mode="local"
+        fi
+    fi
+
     if [ "$DRY_RUN" = true ]; then
         echo "----------------------------------------------------------------"
-        echo "Would submit job for: $exp_name"
+        echo "Would run job for: $exp_name"
         echo "PROJECT_ROOT=$PROJECT_ROOT"
         echo "DATA_ROOT=$DATA_ROOT"
         echo "ENV_NAME=$ENV_NAME"
         echo "GPUS_PER_NODE=$GPUS_PER_NODE"
-        echo "${sbatch_cmd[@]}"
-    else
-        echo "Submitting job for: $exp_name"
+        echo "LAUNCH_MODE=$effective_launch_mode"
+        if [ "$effective_launch_mode" = "sbatch" ]; then
+            echo "${sbatch_cmd[@]}"
+        else
+            echo "$local_cmd"
+        fi
+    elif [ "$effective_launch_mode" = "sbatch" ]; then
+        command -v sbatch >/dev/null 2>&1 || { echo "sbatch not found; use LAUNCH_MODE=local to run on this machine" >&2; exit 1; }
+        echo "Submitting Slurm job for: $exp_name"
         "${sbatch_cmd[@]}"
+    elif [ "$effective_launch_mode" = "local" ]; then
+        if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
+            export CUDA_VISIBLE_DEVICES
+            CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((GPUS_PER_NODE - 1)))
+        fi
+        echo "Running local job for: $exp_name"
+        echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
+        bash -lc "$setup_cmds; $run_cmd"
+    else
+        echo "Unknown LAUNCH_MODE=$LAUNCH_MODE; expected auto, sbatch, or local" >&2
+        exit 1
     fi
 }
 
