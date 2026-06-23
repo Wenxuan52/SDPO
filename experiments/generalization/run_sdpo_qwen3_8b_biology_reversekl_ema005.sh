@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: ./run_sdpo_qwen3_8b_biology_reversekl_ema005.sh [--dry-run]
-# Dedicated launch script for:
-#   Qwen3-8B + SDPO reverse KL (alpha=1.0) + EMA teacher update rate 0.05
-#   on SciKnowEval Biology.
+# Usage:
+#   bash experiments/generalization/run_sdpo_qwen3_8b_biology_reversekl_ema005.sh
+#   bash experiments/generalization/run_sdpo_qwen3_8b_biology_reversekl_ema005.sh --dry-run
 #
-# This script submits a Slurm job by default. It assumes the environment was
-# prepared by setup_h200_env.sh and only re-exports runtime paths/caches here.
+# Env examples:
+#   ENV_NAME=sdpo-a800 \
+#   PROJECT_ROOT=/media/damoxing/che-liu-fileset/cxy_worldmodel/SDPO \
+#   DATA_ROOT=/media/datasets/cheliu21/cxy_worldmodel/sdpo \
+#   GPUS_PER_NODE=2 \
+#   LAUNCH_MODE=local \
+#   WANDB_MODE=offline \
+#   bash experiments/generalization/run_sdpo_qwen3_8b_biology_reversekl_ema005.sh
 
 DRY_RUN=false
 export USER=${USER:-$(whoami)}
+
 if [[ "${1:-}" == "--dry-run" ]]; then
     DRY_RUN=true
     echo "Dry run mode enabled. Commands will be printed but not executed."
@@ -20,10 +26,9 @@ fi
 # CONFIGURATION
 # =============================================================================
 
-# Paths / environment. Override these when your cluster uses different mounts.
 PROJECT_ROOT="${PROJECT_ROOT:-/media/damoxing/che-liu-fileset/cxy_worldmodel/SDPO}"
 DATA_ROOT="${DATA_ROOT:-/media/datasets/cheliu21/cxy_worldmodel/sdpo}"
-ENV_NAME="${ENV_NAME:-sdpo-h200}"
+ENV_NAME="${ENV_NAME:-sdpo-a800}"
 CONDA_SH="${CONDA_SH:-/opt/conda/etc/profile.d/conda.sh}"
 
 export HF_HOME="${HF_HOME:-${DATA_ROOT}/.cache/huggingface}"
@@ -31,16 +36,14 @@ export HF_HUB_CACHE="${HF_HUB_CACHE:-${HF_HOME}/hub}"
 export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-${HF_HOME}/transformers}"
 export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-0}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
-export WANDB_MODE="${WANDB_MODE:-offline}"
+export WANDB_MODE="${WANDB_MODE:-online}"
 export HYDRA_FULL_ERROR="${HYDRA_FULL_ERROR:-1}"
 
-# Base settings
 CONFIG_NAME="sdpo"
 BASE_JOB_NAME="rlvr-biology-rkl"
-
 DATA_PATH="datasets/sciknoweval/biology/"
 
-# Fixed Slurm resources. Defaults target one 8-GPU H20Z/H200 node.
+# Slurm settings, only used when LAUNCH_MODE=sbatch.
 ACCOUNT="${ACCOUNT:-a156}"
 NODES="${NODES:-1}"
 PARTITION="${PARTITION:-normal}"
@@ -51,21 +54,25 @@ GPUS_PER_NODE="${GPUS_PER_NODE:-8}"
 MEM="${MEM:-460000}"
 CPUS_PER_TASK="${CPUS_PER_TASK:-288}"
 
-# Experiment parameters
+# Local mode defaults.
+# Default behavior: local launch forces CUDA_VISIBLE_DEVICES from GPUS_PER_NODE,
+# so stale values like CUDA_VISIBLE_DEVICES=0 do not silently make a 2-GPU run use 1 GPU.
+LOCAL_FORCE_CUDA_VISIBLE_DEVICES="${LOCAL_FORCE_CUDA_VISIBLE_DEVICES:-1}"
+
+# Experiment parameters.
 TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-32}"
 ROLLOUT_BATCH_SIZE="${ROLLOUT_BATCH_SIZE:-8}"
 LR="${LR:-1e-5}"
 DONTS_REPROMPT_ON_SELF_SUCCESS="${DONTS_REPROMPT_ON_SELF_SUCCESS:-True}"
 
-# 0: forward KL, 0.5: Jensen-Shannon divergence, 1: reverse KL
+# 0: forward KL, 0.5: Jensen-Shannon divergence, 1: reverse KL.
 ALPHA="${ALPHA:-1.0}"
 TEACHER_UPDATE_RATE="${TEACHER_UPDATE_RATE:-0.05}"
 MODEL_PATH="${MODEL_PATH:-Qwen/Qwen3-8B}"
 
-# Keep runtime jobs deterministic. setup_h200_env.sh should already have
-# installed these deps; set INSTALL_RUNTIME_DEPS=1 only to repair an env.
 INSTALL_RUNTIME_DEPS="${INSTALL_RUNTIME_DEPS:-0}"
-# auto: use sbatch when available, otherwise run directly in the current shell.
+
+# auto: use sbatch when available, otherwise run directly in the current machine.
 # Set LAUNCH_MODE=sbatch or LAUNCH_MODE=local to force one path.
 LAUNCH_MODE="${LAUNCH_MODE:-auto}"
 
@@ -78,11 +85,20 @@ submit_job() {
     local script_args="$2"
     local data_path="$3"
 
-    mkdir -p "${DATA_ROOT}/output/SDPO" "${DATA_ROOT}/checkpoints" "${HF_HOME}" "${HF_HUB_CACHE}" "${TRANSFORMERS_CACHE}"
+    mkdir -p \
+        "${DATA_ROOT}/output/SDPO" \
+        "${DATA_ROOT}/checkpoints" \
+        "${HF_HOME}" \
+        "${HF_HUB_CACHE}" \
+        "${TRANSFORMERS_CACHE}"
+
+    local env_bin="/opt/conda/envs/${ENV_NAME}/bin"
 
     local setup_cmds="set -euo pipefail; \
 if [ -f ${CONDA_SH} ]; then source ${CONDA_SH}; else source \"\$(conda info --base)/etc/profile.d/conda.sh\"; fi; \
 conda activate ${ENV_NAME}; \
+if [ -d ${env_bin} ]; then export PATH=${env_bin}:\$PATH; fi; \
+hash -r; \
 cd ${PROJECT_ROOT}; \
 export PROJECT_ROOT=${PROJECT_ROOT}; \
 export DATA_ROOT=${DATA_ROOT}; \
@@ -94,6 +110,12 @@ export HF_HUB_ENABLE_HF_TRANSFER=${HF_HUB_ENABLE_HF_TRANSFER}; \
 export TOKENIZERS_PARALLELISM=${TOKENIZERS_PARALLELISM}; \
 export WANDB_MODE=${WANDB_MODE}; \
 export HYDRA_FULL_ERROR=${HYDRA_FULL_ERROR}; \
+echo ===== runtime check =====; \
+echo CONDA_DEFAULT_ENV=\${CONDA_DEFAULT_ENV:-}; \
+echo PATH=\$PATH; \
+echo python=\$(which python); \
+python -V; \
+python -c \"import sys, ray; print('python executable:', sys.executable); print('ray version:', ray.__version__); print('ray file:', ray.__file__)\"; \
 if [ ${INSTALL_RUNTIME_DEPS} = 1 ]; then python -m pip install word2number latex2sympy2 math-verify\[antlr4_9_3\]==0.8.0 wandb; fi"
 
     local run_cmd="bash ${PROJECT_ROOT}/training/verl_training.sh $exp_name $CONFIG_NAME $data_path $script_args"
@@ -135,20 +157,29 @@ if [ ${INSTALL_RUNTIME_DEPS} = 1 ]; then python -m pip install word2number latex
         echo "ENV_NAME=$ENV_NAME"
         echo "GPUS_PER_NODE=$GPUS_PER_NODE"
         echo "LAUNCH_MODE=$effective_launch_mode"
+
         if [ "$effective_launch_mode" = "sbatch" ]; then
             echo "${sbatch_cmd[@]}"
         else
             echo "$local_cmd"
         fi
     elif [ "$effective_launch_mode" = "sbatch" ]; then
-        command -v sbatch >/dev/null 2>&1 || { echo "sbatch not found; use LAUNCH_MODE=local to run on this machine" >&2; exit 1; }
+        command -v sbatch >/dev/null 2>&1 || {
+            echo "sbatch not found; use LAUNCH_MODE=local to run on this machine" >&2
+            exit 1
+        }
+
         echo "Submitting Slurm job for: $exp_name"
         "${sbatch_cmd[@]}"
     elif [ "$effective_launch_mode" = "local" ]; then
-        if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
+        if [ "$LOCAL_FORCE_CUDA_VISIBLE_DEVICES" = "1" ]; then
+            CUDA_VISIBLE_DEVICES="$(seq -s, 0 $((GPUS_PER_NODE - 1)))"
             export CUDA_VISIBLE_DEVICES
-            CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((GPUS_PER_NODE - 1)))
+        elif [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
+            CUDA_VISIBLE_DEVICES="$(seq -s, 0 $((GPUS_PER_NODE - 1)))"
+            export CUDA_VISIBLE_DEVICES
         fi
+
         echo "Running local job for: $exp_name"
         echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
         bash -lc "$setup_cmds; $run_cmd"
