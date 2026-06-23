@@ -143,14 +143,17 @@ echo "[setup] installing SDPO requirements from official PyPI"
 REQ_FILE="$(mktemp /tmp/sdpo-h200-req.XXXXXX.txt)"
 python - <<PY
 from pathlib import Path
+import re
 
 src = Path("requirements.txt")
 dst = Path("${REQ_FILE}")
 
 # Keep the training/runtime dependency set tight. These are optional/dev-only
 # for your target SDPO+vLLM rollout run and are common sources of mirror/build
-# failures on cluster images.
-skip_prefixes = (
+# failures on cluster images. Match exact package names only: torchdata is a
+# real verl runtime dependency and must not be skipped just because it starts
+# with "torch".
+skip_packages = {
     "liger-kernel",
     "pre-commit",
     "vllm",
@@ -158,7 +161,7 @@ skip_prefixes = (
     "torch",
     "torchvision",
     "torchaudio",
-)
+}
 
 out = []
 for raw in src.read_text().splitlines():
@@ -166,8 +169,9 @@ for raw in src.read_text().splitlines():
     if not s or s.startswith("#"):
         out.append(raw)
         continue
-    normalized = s.split("[", 1)[0].split("=", 1)[0].strip()
-    if any(s.startswith(prefix) or normalized == prefix for prefix in skip_prefixes):
+    match = re.match(r"([A-Za-z0-9_.-]+)", s)
+    normalized = match.group(1).lower().replace("_", "-") if match else s
+    if normalized in skip_packages:
         out.append(f"# skipped by setup_h200_env.sh: {raw}")
         continue
     out.append(raw)
@@ -231,6 +235,7 @@ for dist_name in [
     "datasets",
     "peft",
     "tensordict",
+    "torchdata",
 ]:
     try:
         print(f"{dist_name}: {md.version(dist_name)}")
@@ -260,6 +265,7 @@ imports = [
     "transformers",
     "flash_attn",
     "verl",
+    "torchdata",
 ]
 for name in imports:
     importlib.import_module(name)
@@ -273,6 +279,9 @@ print("vllm public API import ok:", LLM, SamplingParams)
 # rollout server still fails at startup if this private V1 path is absent.
 from vllm.v1.engine.utils import CoreEngineProcManager
 print("vllm CoreEngineProcManager import ok:", CoreEngineProcManager)
+
+from torchdata.stateful_dataloader import StatefulDataLoader
+print("torchdata StatefulDataLoader import ok:", StatefulDataLoader)
 
 import verl.workers.rollout.vllm_rollout.vllm_async_server
 print("verl vLLM async server import ok")
