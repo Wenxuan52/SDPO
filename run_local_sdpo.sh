@@ -39,6 +39,7 @@ RHO="${RHO:-0.95}"
 REGULATION_LEVEL="${REGULATION_LEVEL:-0.9}"
 SEED="${SEED:-42}"
 ENTROPY_COEFF="${ENTROPY_COEFF:-1e-5}"
+TOTAL_TRAINING_STEPS="${TOTAL_TRAINING_STEPS:-800}"
 GPUS_PER_NODE="${GPUS_PER_NODE:-${N_GPUS_PER_NODE:-16}}"
 export GPUS_PER_NODE
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-$(seq -s, 0 $((GPUS_PER_NODE - 1)))}"
@@ -80,6 +81,7 @@ data.seed=${SEED} \
 trainer.group_name=SDPO-local \
 trainer.seed=${SEED} \
 trainer.n_gpus_per_node=${GPUS_PER_NODE} \
+trainer.total_training_steps=${TOTAL_TRAINING_STEPS} \
 actor_rollout_ref.actor.entropy_coeff=${ENTROPY_COEFF} \
 actor_rollout_ref.rollout.n=${ROLLOUT_BATCH_SIZE} \
 actor_rollout_ref.model.path=${MODEL_PATH} \
@@ -112,6 +114,7 @@ Val file: ${VAL_FILE}
 Model: ${MODEL_PATH}
 Checkpoint dir: ${CKPT_DIR}
 GPUs: ${CUDA_VISIBLE_DEVICES}
+Total training steps: ${TOTAL_TRAINING_STEPS}
 ----------------------------------------------------------------
 EOM
 
