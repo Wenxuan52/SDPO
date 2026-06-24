@@ -13,7 +13,7 @@ CONFIG_NAME="${CONFIG_NAME:-sdpo}"
 # repository, dataset root, or model live elsewhere.
 export PROJECT_ROOT="${PROJECT_ROOT:-$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )}"
 export DATA_ROOT="${DATA_ROOT:-/media/datasets/cheliu21/cxy_worldmodel/sdpo}"
-MODEL_PATH="${MODEL_PATH:-/home/ma-user/work/test_full/models/Qwen3-8B}"
+MODEL_PATH="${MODEL_PATH:-Qwen/Qwen3-8B}"
 
 # Dataset path relative to DATA_ROOT. user.yaml expands this into:
 #   ${DATA_ROOT}/${DATA_PATH}/train.parquet
@@ -40,7 +40,8 @@ REGULATION_LEVEL="${REGULATION_LEVEL:-0.9}"
 SEED="${SEED:-42}"
 ENTROPY_COEFF="${ENTROPY_COEFF:-1e-5}"
 TOTAL_TRAINING_STEPS="${TOTAL_TRAINING_STEPS:-800}"
-GPUS_PER_NODE="${GPUS_PER_NODE:-${N_GPUS_PER_NODE:-16}}"
+TEST_FREQ="${TEST_FREQ:-20}"
+GPUS_PER_NODE="${GPUS_PER_NODE:-${N_GPUS_PER_NODE:-8}}"
 export GPUS_PER_NODE
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-$(seq -s, 0 $((GPUS_PER_NODE - 1)))}"
 
@@ -82,6 +83,7 @@ trainer.group_name=SDPO-local \
 trainer.seed=${SEED} \
 trainer.n_gpus_per_node=${GPUS_PER_NODE} \
 trainer.total_training_steps=${TOTAL_TRAINING_STEPS} \
+trainer.test_freq=${TEST_FREQ} \
 actor_rollout_ref.actor.entropy_coeff=${ENTROPY_COEFF} \
 actor_rollout_ref.rollout.n=${ROLLOUT_BATCH_SIZE} \
 actor_rollout_ref.model.path=${MODEL_PATH} \
@@ -115,6 +117,7 @@ Model: ${MODEL_PATH}
 Checkpoint dir: ${CKPT_DIR}
 GPUs: ${CUDA_VISIBLE_DEVICES}
 Total training steps: ${TOTAL_TRAINING_STEPS}
+Evaluation frequency: every ${TEST_FREQ} steps
 ----------------------------------------------------------------
 EOM
 
